@@ -14,6 +14,8 @@ impl fmt::Display for List {
             if count != 0 {
                 try!(write!(f, ","));
             }
+            try!(write!(f, "{}:", count));
+
             try!(write!(f, "{}", v));
         }
         //加上中括号，并且返回fmt:Result的值
