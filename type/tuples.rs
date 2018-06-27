@@ -1,3 +1,5 @@
+use std::fmt;
+
 fn reverse(pair: (i32, bool)) -> (bool, i32) {
     let (integer, boolean) = pair;
 
@@ -5,8 +7,18 @@ fn reverse(pair: (i32, bool)) -> (bool, i32) {
     (boolean, integer)
 }
 
+fn transpose(pair: (f32,f32) -> (f32,f32)){
+    let (integer,integer) = pair;
+}
+
 #[derive(Debug)]
 struct Matrix(f32, f32, f32, f32);
+
+impl fmt::Display for Matrix {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({},{}) \n({},{})", self.0, self.1, self.2, self.3)
+    }
+}
 
 fn main() {
     let long_tuple = (
@@ -36,5 +48,5 @@ fn main() {
     println!("{:?},{:?},{:?},{:?}", a, b, c, d);
 
     let matrix = Matrix(1.1, 1.2, 2.1, 2.2);
-    println!("{:?}", matrix)
+    println!("{}", matrix)
 }
