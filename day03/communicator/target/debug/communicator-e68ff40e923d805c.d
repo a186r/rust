@@ -1,0 +1,1 @@
+/home/a186r/dev/rust/rust/day03/communicator/target/debug/communicator-e68ff40e923d805c: /home/a186r/dev/rust/rust/day03/communicator/src/client.rs /home/a186r/dev/rust/rust/day03/communicator/src/lib.rs /home/a186r/dev/rust/rust/day03/communicator/src/network/mod.rs /home/a186r/dev/rust/rust/day03/communicator/src/network/server.rs
