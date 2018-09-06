@@ -1,4 +1,4 @@
-// 1.普通实现：函数area本来计算一个长方形面积，但是却有两个参数，这两个参数是关联的，不过程序却没有体现出这一点。
+// 1.普通实现：函数area本来计算一个长方形面积，但是却有两个参数，这两个参数是关联的，但是这种实现方式却没有体现出这一点。
 // fn main() {
 //     let width1 = 30;
 //     let height1 = 50;
@@ -8,6 +8,16 @@
 //         area(width1,height1)
 //     );
 
+// }
+
+// fn main(){
+//     let width1 = 30;
+//     let height1 = 50;
+
+//     println!(
+//         "The area of the rectangle is {} square pixles.",
+//         width1 * height1
+//     );
 // }
 
 // fn area(width: u32,height: u32) -> u32{
@@ -25,6 +35,19 @@
 //     );
 // }
 //     //直接将元组结构 
+// fn area(dimensions:(u32,u32)) -> u32{
+//     dimensions.0 * dimensions.1
+// }
+
+// fn main() {
+//     let rect1 = (30,50);
+
+//     println!(
+//         "The area of the rectangle is {} square pixles.",
+//         area(rect1)
+//     );
+// }
+
 // fn area(dimensions:(u32,u32)) -> u32{
 //     dimensions.0 * dimensions.1
 // }
@@ -56,8 +79,30 @@
 //     rectangle.width * rectangle.height
 // }
 
+// struct Rectangle{
+//     width:u32,
+//     height:u32,
+// }
+
+// fn main(){
+
+//     let rect1 = Rectangle{
+//         width:30,
+//         height:50,
+//     };
+
+//     println!(
+//         "The area of the rectangle is {} square pixels.",
+//         area(&rect1)
+//     );
+// }
+
+// fn area(rectangle: &Rectangle) -> u32{
+//     rectangle.width * rectangle.height
+// }
+
 // 4.通过派生trait增加实用功能
-// 这里实用derive注解来派生Debug trait，并使用调试格式打印Rectangle实例
+// 这里使用derive注解来派生Debug trait，并使用调试格式打印Rectangle实例
 // #[derive(Debug)]
 // struct Rectangle{
 //     width: u32,
@@ -85,6 +130,33 @@
 //     );
 // }
 
+// #[derive(Debug)]
+// struct Rectangle{
+//     width:u32,
+//     height:u32,
+// }
+
+// impl Rectangle{
+//     fn area(&self) -> u32{
+//         self.width * self.height
+//     }
+// }
+
+// fn main(){
+//     let rect1 = Rectangle{
+//         width:30,
+//         height:50,
+//     };
+
+//     println!("rect1 is {:#?}",rect1);
+
+//     println!(
+//         "The area of rectangle is {} square pixels.",
+//         rect1.area()
+//     )
+// }
+
+// 5.增加更多实用功能
 // #[derive(Debug)]
 // struct Rectangle{
 //     width:u32,
@@ -151,16 +223,16 @@
 // }
 
 // 可以使用多个impl块，虽然没有理由将这些方法分散在多个impl块中，但是这是有效的语法
-impl Rectangle{
-    fn area(&self) -> u32{
-        self.width * self.height
-    }
-}
+// impl Rectangle{
+//     fn area(&self) -> u32{
+//         self.width * self.height
+//     }
+// }
 
-impl Rectangle{
-    fn area(&self,other: &Rectangle) -> bool{
-        self.width < other.width && self.height < other.height
-    }
-}
+// impl Rectangle{
+//     fn area(&self,other: &Rectangle) -> bool{
+//         self.width < other.width && self.height < other.height
+//     }
+// }
 
 // 结构体并不是创建自定义类型的唯一方法；让我们转向Rust的枚举功能并为自己的工具箱再添一个工具！mmp哦，又要添一个工具，辣鸡哦，我回家再看吧，这都要下班了，还工具工具工具呢，滚了哦
