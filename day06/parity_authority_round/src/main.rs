@@ -48,7 +48,9 @@ use unexpected::{Mismatch, OutOfBounds};
 
 mod finality;
 
-// 定义一个结构体 都是验证相关的参数
+// 将参数定义在结构体重，这样代码更明确
+// 任何Authority Round相关的字段都可以到这里来找
+
 /// `AuthorityRound` params.
 pub struct AuthorityRoundParams {
 	/// Time to wait before next block or authority switching,
