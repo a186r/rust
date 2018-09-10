@@ -41,6 +41,10 @@ use self::finality::RollingFinality;
 use ethkey::{self, Password, Signature};
 use io::{IoContext, IoHandler, TimerToken, IoService};
 use itertools::{self, Itertools};
+
+// TODO: 373行RlpStream
+// 以太坊中的RLP(递归长度前缀)编码
+// 是以太坊中数据序列化/反序列化的主要方法，区块、交易等数据结构在 网络传输和持久化 时会先经过RLP编码后再存储到数据库中。
 use rlp::{encode, Decodable, DecoderError, Encodable, RlpStream, Rlp};
 use ethereum_types::{H256, H520, Address, U128, U256};
 use parking_lot::{Mutex, RwLock};
@@ -62,7 +66,7 @@ pub struct AuthorityRoundParams {
 	/// Deliberately typed as u16 as too high of a value leads
 	/// to slow block issuance.
 	// 这里值大于u16最大值，会导致出块速度减慢
-	// TODO: AuthorityRound / step怎么理解 step像是AuthorityRound的循环次次数
+	// TODO: 产生block的时间间隔
 	pub step_duration: u16,
 	/// Starting step,
 	pub start_step: Option<u64>,
@@ -319,12 +323,16 @@ impl EpochManager {
 	}
 }
 
+// TODO:关于Step：EmptyStep、SealedEmptyStep、PermissionedStep
+
 // 轮到出块时却没有交易，其他验证者积累这些信息，然后将他们作为证据包含在proof中
+
+// TODO:Seal是做什么用的
 /// A message broadcast by authorities when it's their turn to seal a block but there are no
 /// transactions. Other authorities accumulate these messages and later include them in the seal as
 /// proof.
 /// 
-// TODO: 结构体 EmptyStep
+// TODO: 结构体 EmptyStep，这里面的EmptyStep是做什么用的,还有下面的SealedEmptyStep
 #[derive(Clone, Debug)]
 struct EmptyStep {
 	//H520、H256 Unformatted binary data of fixed length. 来自ethereum-types
@@ -363,6 +371,7 @@ impl EmptyStep {
 }
 
 
+// TODO: 这里加解密是为了做什么？就是为了前文的验证数据？
 // 为结构体实现trait
 impl fmt::Display for EmptyStep {
 	fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -370,6 +379,7 @@ impl fmt::Display for EmptyStep {
 	}
 }
 
+// RLP编码
 impl Encodable for EmptyStep {
 	fn rlp_append(&self, s: &mut RlpStream) {
 		let empty_step_rlp = empty_step_rlp(self.step, &self.parent_hash);
@@ -379,6 +389,7 @@ impl Encodable for EmptyStep {
 	}
 }
 
+// RLP解码
 impl Decodable for EmptyStep {
 	fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
 		let signature = rlp.val_at(0)?;
@@ -397,6 +408,7 @@ pub fn empty_step_full_rlp(signature: &H520, empty_step_rlp: &[u8]) -> Vec<u8> {
 	s.out()
 }
 
+// 传入step和parent hash，返回一个u8类型的集合
 pub fn empty_step_rlp(step: usize, parent_hash: &H256) -> Vec<u8> {
 	let mut s = RlpStream::new_list(2);
 	s.append(&step).append(parent_hash);
@@ -407,6 +419,8 @@ pub fn empty_step_rlp(step: usize, parent_hash: &H256) -> Vec<u8> {
 /// the `parent_hash` in order to save space. The included signature is of the original empty step
 /// message, which can be reconstructed by using the parent hash of the block in which this sealed
 /// empty message is included.
+/// 
+// TODO:比EmptyStep少了一个parent_hash字段
 struct SealedEmptyStep {
 	signature: H520,
 	step: usize,
@@ -438,6 +452,7 @@ struct PermissionedStep {
 /// Engine using `AuthorityRound` proof-of-authority BFT consensus.
 pub struct AuthorityRound {
 	transition_service: IoService<()>,
+	// 这里的step是一个 PermissionedStep
 	step: Arc<PermissionedStep>,
 	client: Arc<RwLock<Option<Weak<EngineClient>>>>,
 	signer: RwLock<EngineSigner>,
@@ -606,6 +621,7 @@ fn verify_timestamp(step: &Step, header_step: usize) -> Result<(), BlockError> {
 	}
 }
 
+// 验证
 fn verify_external(header: &Header, validators: &ValidatorSet, empty_steps_transition: u64) -> Result<(), Error> {
 	let header_step = header_step(header, empty_steps_transition)?;
 
