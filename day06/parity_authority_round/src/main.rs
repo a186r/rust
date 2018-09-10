@@ -48,9 +48,12 @@ use unexpected::{Mismatch, OutOfBounds};
 
 mod finality;
 
-// 将参数定义在结构体重，这样代码更明确
+// 将参数定义在结构体中，这样代码更明确
 // 任何Authority Round相关的字段都可以到这里来找
+// 可配置
 
+// TODO: 结构体 AuthorityRoundParams
+// "AuthorityRound"参数
 /// `AuthorityRound` params.
 pub struct AuthorityRoundParams {
 	/// Time to wait before next block or authority switching,
@@ -58,6 +61,8 @@ pub struct AuthorityRoundParams {
 	///
 	/// Deliberately typed as u16 as too high of a value leads
 	/// to slow block issuance.
+	// 这里值大于u16最大值，会导致出块速度减慢
+	// TODO: AuthorityRound / step怎么理解 step像是AuthorityRound的循环次次数
 	pub step_duration: u16,
 	/// Starting step,
 	pub start_step: Option<u64>,
@@ -86,22 +91,32 @@ pub struct AuthorityRoundParams {
 }
 
 const U16_MAX: usize = ::std::u16::MAX as usize;
-
-// 使用泛型ethjson::spec::AuthorityRoundParams 为结构体定义一个方法
+  
+// 为结构体 AuthorityRoundParams 实现trait
 impl From<ethjson::spec::AuthorityRoundParams> for AuthorityRoundParams {
+
+	// from返回一个具有基本设置的实例
 	fn from(p: ethjson::spec::AuthorityRoundParams) -> Self {
 		let mut step_duration_usize: usize = p.step_duration.into();
+
+		// 如果设置的step_duration_usize过大，将其重置为u16所能存储的最大值
 		if step_duration_usize > U16_MAX {
 			step_duration_usize = U16_MAX;
 			warn!(target: "engine", "step_duration is too high ({}), setting it to {}", step_duration_usize, U16_MAX);
 		}
+
 		AuthorityRoundParams {
+			// step设置
 			step_duration: step_duration_usize as u16,
 			validators: new_validator_set(p.validators),
 			start_step: p.start_step.map(Into::into),
+
+			// 验证人过渡
 			validate_score_transition: p.validate_score_transition.map_or(0, Into::into),
 			validate_step_transition: p.validate_step_transition.map_or(0, Into::into),
 			immediate_transitions: p.immediate_transitions.unwrap_or(false),
+
+			// 区块奖励
 			block_reward: p.block_reward.map_or_else(Default::default, Into::into),
 			block_reward_contract_transition: p.block_reward_contract_transition.map_or(0, Into::into),
 			block_reward_contract: match (p.block_reward_contract_code, p.block_reward_contract_address) {
@@ -109,6 +124,8 @@ impl From<ethjson::spec::AuthorityRoundParams> for AuthorityRoundParams {
 				(_, Some(address)) => Some(BlockRewardContract::new_from_address(address.into())),
 				(None, None) => None,
 			},
+
+			// 叔块
 			maximum_uncle_count_transition: p.maximum_uncle_count_transition.map_or(0, Into::into),
 			maximum_uncle_count: p.maximum_uncle_count.map_or(0, Into::into),
 			empty_steps_transition: p.empty_steps_transition.map_or(u64::max_value(), |n| ::std::cmp::max(n.into(), 1)),
@@ -117,8 +134,9 @@ impl From<ethjson::spec::AuthorityRoundParams> for AuthorityRoundParams {
 	}
 }
 
-// 校准？步调？
 // Helper for managing the step.
+// TODO: 结构体 Step
+// step辅助管理
 #[derive(Debug)]
 struct Step {
 	calibrate: bool, // whether calibration is enabled.
@@ -128,12 +146,18 @@ struct Step {
 
 // 为结构体实现的方法
 impl Step {
+
+	// 将Step加载进来,返回一个usize类型的
 	fn load(&self) -> usize { self.inner.load(AtomicOrdering::SeqCst) }
 
+// 剩余时间，返回一个Duration
 	fn duration_remaining(&self) -> Duration {
+		// 获取当前时间
 		let now = unix_now();
+
 		let expected_seconds = (self.load() as u64)
 			.checked_add(1)
+			// 闭包
 			.and_then(|ctr| ctr.checked_mul(self.duration as u64))
 			.map(Duration::from_secs);
 
@@ -149,7 +173,7 @@ impl Step {
 
 	}
 
-// 在结构体方法内实现的方法
+// 
 	fn increment(&self) {
 		use std::usize;
 		// fetch_add won't panic on overflow but will rather wrap
@@ -159,9 +183,9 @@ impl Step {
 			error!(target: "engine", "Step counter is too high: {}, aborting", usize::MAX);
 			panic!("step counter is too high: {}", usize::MAX);
 		}
-
 	}
 
+// 校准
 	fn calibrate(&self) {
 		if self.calibrate {
 			let new_step = unix_now().as_secs() / (self.duration as u64);
@@ -169,6 +193,7 @@ impl Step {
 		}
 	}
 
+// TODO:
 	fn check_future(&self, given: usize) -> Result<(), Option<OutOfBounds<u64>>> {
 		const REJECTED_STEP_DRIFT: usize = 4;
 
@@ -204,8 +229,10 @@ fn calculate_score(parent_step: U256, current_step: U256, current_empty_steps: U
 	U256::from(U128::max_value()) + parent_step - current_step + current_empty_steps
 }
 
-// 时代管理？
+// TODO: 结构体 EpochManager
+// TODO: epoch
 struct EpochManager {
+	// 过渡hash
 	epoch_transition_hash: H256,
 	epoch_transition_number: BlockNumber,
 	finality_checker: RollingFinality,
@@ -296,8 +323,11 @@ impl EpochManager {
 /// A message broadcast by authorities when it's their turn to seal a block but there are no
 /// transactions. Other authorities accumulate these messages and later include them in the seal as
 /// proof.
+/// 
+// TODO: 结构体 EmptyStep
 #[derive(Clone, Debug)]
 struct EmptyStep {
+	//H520、H256 Unformatted binary data of fixed length. 来自ethereum-types
 	signature: H520,
 	step: usize,
 	parent_hash: H256,
@@ -332,6 +362,8 @@ impl EmptyStep {
 	}
 }
 
+
+// 为结构体实现trait
 impl fmt::Display for EmptyStep {
 	fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
 		write!(f, "({}, {}, {})", self.signature, self.step, self.parent_hash)
