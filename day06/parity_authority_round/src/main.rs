@@ -14,7 +14,72 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
+// 区块链引擎，支持非即时的BTF权限
 //! A blockchain engine that supports a non-instant BFT proof-of-authority.
+
+
+// We will run a chain with Authority Round consensus engine. First we need to create a basic chain spec with all required fields.
+// 使用Authority Round consensus engine创建一条新的链，首先要创建一个创世块
+// validators是验证器列表，一组允许参与共识的账户，可以在创世块中指定
+
+// 一些可选参数：
+// "blockReward" 区块奖励
+// "validateScoreTransition" Optional, will be included for block 0 by default - Block after which a block’s difficulty is verified.
+// "validateStepTransition" Block after which a double block proposing - e.g when parent and current block are equal - is invalid and considered as a malicious behavior.
+// "immediateTransitions" - bool - Determines whether the validator set transition is applied immediately without waiting for finality (true) or not (false).
+// "blockRewardContractTransition" Block at which the block reward contract should start being used.
+// "blockRewardContractAddress" Block reward contract address, setting the block reward contract. This option overrides the static block reward definition.
+// "maximumUncleCountTransition" Block at which maximum uncle count should be considered.
+// "maximumUncleCount" Maximum number of accepted uncles.
+// "emptyStepsTransition" Block at which empty step messages should start.
+// "maximumEmptySteps" Maximum number of accepted empty steps. 最大可接受的空步数
+
+// {
+//     "name": "DemoPoA",
+//     "engine": {
+//         "authorityRound": {
+//             "params": {
+//                 "stepDuration": "5", //这是出块时间，设置为5秒
+//                 "validators" : { //验证人，暂时是空的
+//                     "list": []
+//                 }
+//             }
+//         }
+//     },
+//     "params": {
+//         "gasLimitBoundDivisor": "0x400",  //gas调整值
+//         "maximumExtraDataSize": "0x20",
+//         "minGasLimit": "0x1388",
+//         "networkID" : "0x2323",
+//         "eip155Transition": 0,
+//         "validateChainIdTransition": 0,
+//         "eip140Transition": 0,
+//         "eip211Transition": 0,
+//         "eip214Transition": 0,
+//         "eip658Transition": 0
+//     },
+
+// Authority Round consensus的其他字段值
+//     "genesis": {
+//         "seal": { // 出块
+//             "authorityRound": {
+//                 "step": "0x0",//区块高度？
+//                 "signature": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+//             }
+//         },
+			// 难度
+//         "difficulty": "0x20000",
+			// gas限制
+//         "gasLimit": "0x5B8D80"
+//     },
+// 包含标准的以太坊预置合约
+//     "accounts": {
+//         "0x0000000000000000000000000000000000000001": { "balance": "1", "builtin": { "name": "ecrecover", "pricing": { "linear": { "base": 3000, "word": 0 } } } },
+//         "0x0000000000000000000000000000000000000002": { "balance": "1", "builtin": { "name": "sha256", "pricing": { "linear": { "base": 60, "word": 12 } } } },
+//         "0x0000000000000000000000000000000000000003": { "balance": "1", "builtin": { "name": "ripemd160", "pricing": { "linear": { "base": 600, "word": 120 } } } },
+//         "0x0000000000000000000000000000000000000004": { "balance": "1", "builtin": { "name": "identity", "pricing": { "linear": { "base": 15, "word": 3 } } } }
+//     }
+// }
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
@@ -55,6 +120,9 @@ mod finality;
 // 将参数定义在结构体中，这样代码更明确
 // 任何Authority Round相关的字段都可以到这里来找
 // 可配置
+
+// Seal block 就是打包区块的意思
+// "Seal a block" is a proposed term to describe "mine a block" in a private chain.
 
 // TODO: 结构体 AuthorityRoundParams
 // "AuthorityRound"参数
@@ -593,6 +661,8 @@ fn header_empty_steps_signers(header: &Header, empty_steps_transition: u64) -> R
 	}
 }
 
+// 
+
 fn step_proposer(validators: &ValidatorSet, bh: &H256, step: usize) -> Address {
 	let proposer = validators.get(bh, step);
 	trace!(target: "engine", "Fetched proposer for step {}: {}", step, proposer);
@@ -843,13 +913,17 @@ struct TransitionHandler {
 
 const ENGINE_TIMEOUT_TOKEN: TimerToken = 23;
 
+// 为结构体TransitionHandler实现trait IoHandler
 impl IoHandler<()> for TransitionHandler {
+
+	// 初始化
 	fn initialize(&self, io: &IoContext<()>) {
 		let remaining = AsMillis::as_millis(&self.step.inner.duration_remaining());
 		io.register_timer_once(ENGINE_TIMEOUT_TOKEN, Duration::from_millis(remaining))
 			.unwrap_or_else(|e| warn!(target: "engine", "Failed to start consensus step timer: {}.", e))
 	}
 
+	// 超时
 	fn timeout(&self, io: &IoContext<()>, timer: TimerToken) {
 		if timer == ENGINE_TIMEOUT_TOKEN {
 			// NOTE we might be lagging by couple of steps in case the timeout
@@ -872,6 +946,8 @@ impl IoHandler<()> for TransitionHandler {
 	}
 }
 
+
+// 为结构体AuthorityRound实现trait Engine
 impl Engine<EthereumMachine> for AuthorityRound {
 	fn name(&self) -> &str { "AuthorityRound" }
 
@@ -893,6 +969,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		}
 	}
 
+// step和signature信息
 	/// Additional engine-specific information for the user/developer concerning `header`.
 	fn extra_info(&self, header: &Header) -> BTreeMap<String, String> {
 		let step = header_step(header, self.empty_steps_transition).as_ref().map(ToString::to_string).unwrap_or("".into());
@@ -972,10 +1049,12 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		Ok(())
 	}
 
-	/// Attempt to seal the block internally.
+	/// TODO:Attempt to seal the block internally.
 	///
 	/// This operation is synchronous and may (quite reasonably) not be available, in which case
 	/// `Seal::None` will be returned.
+	// 操作是同步的，如果不可用会返回Seal::None
+	// 生成seal
 	fn generate_seal(&self, block: &ExecutedBlock, parent: &Header) -> Seal {
 		// first check to avoid generating signature most of the time
 		// (but there's still a race to the `compare_and_swap`)
@@ -1114,7 +1193,6 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		self.validators.on_epoch_begin(first, &header, &mut call)
 	}
 
-// 最终块中确认区块奖励
 	/// Apply the block reward on finalisation of the block.
 	fn on_close_block(&self, block: &mut ExecutedBlock) -> Result<(), Error> {
 		let mut beneficiaries = Vec::new();
@@ -1444,7 +1522,6 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		}
 	}
 
-// 注册客户端
 	fn register_client(&self, client: Weak<EngineClient>) {
 		*self.client.write() = Some(client.clone());
 		self.validators.register_client(client);
