@@ -185,6 +185,7 @@ impl From<ethjson::spec::AuthorityRoundParams> for AuthorityRoundParams {
 			// step设置
 			step_duration: step_duration_usize as u16,
 			validators: new_validator_set(p.validators),
+			// 迭代器适配器map
 			start_step: p.start_step.map(Into::into),
 
 			// 验证人过渡
