@@ -60,6 +60,10 @@
 //     },
 
 // Authority Round consensus的其他字段值
+
+// The genesis seal should not be changed unless a hard fork is conducted.
+// If malicious authorities are possible then --force-sealing is advised, this will ensure that the correct chain is the longest (making it BFT with finality of authorities_count * step_duration given no network partitions).
+
 //     "genesis": {
 //         "seal": { // 出块
 //             "authorityRound": {
@@ -1433,7 +1437,9 @@ impl Engine<EthereumMachine> for AuthorityRound {
 
 					if let Ok(empty_step_signers) = header_empty_steps_signers(&header, self.empty_steps_transition) {
 						let res = (hash, signers);
-						trace!(target: "finality", "Ancestry iteration: yielding {:?}", res);
+					The genesis seal should not be changed unless a hard fork is conducted.
+
+If malicious authorities are possible then --force-sealing is advised, this will ensure that the correct chain is the longest (making it BFT with finality of authorities_count * step_duration given no network partitions).	trace!(target: "finality", "Ancestry iteration: yielding {:?}", res);
 
 						hash = header.parent_hash().clone();
 						parent_empty_steps_signers = empty_step_signers;
