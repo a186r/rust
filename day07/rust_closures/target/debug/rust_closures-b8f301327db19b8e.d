@@ -1,0 +1,1 @@
+/home/a186r/dev/rust/rust/day07/rust_closures/target/debug/rust_closures-b8f301327db19b8e: /home/a186r/dev/rust/rust/day07/rust_closures/src/lib.rs /home/a186r/dev/rust/rust/day07/rust_closures/src/main.rs

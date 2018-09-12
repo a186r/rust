@@ -14,7 +14,7 @@ fn main(){
     // 将命令行参数收集到一个vector中，并且打印出来
     // 这里的args变量是参数值的所有者并只允许parse_config借用他们，
     // 如果Config尝试获取args中值的所有权会违反Rust的借用规则
-    let args: Vec<String> = env::args().collect();
+    // let args: Vec<String> = env::args().collect();
     
     // let query = &args[1];
     // let filename = &args[2];
@@ -24,9 +24,17 @@ fn main(){
     // let config = Config::new(&args);
 
     // 处理错误情况
-    let config = Config::new(&args).unwrap_or_else(|err| {
-        // println!("Problem parsing arguments: {}", err);
-        // eprintln!("Application error: {}",e);
+    // let config = Config::new(&args).unwrap_or_else(|err| {
+    //     // println!("Problem parsing arguments: {}", err);
+    //     // eprintln!("Application error: {}",e);
+    //     process::exit(1);
+    // });
+
+// 将env的返回值传递给Config::new
+// env::args返回一个迭代器，不同于将迭代器的值收集到一个vector中接着传递一个
+// slice给Config::new，我们直接将env::args返回的迭代器的所有权传递给Config::new.
+    let config = Config::new(env::args()).unwrap_or_else(|err| {
+        eprintln!("Problem parsing arguments: {}",err);
         process::exit(1);
     });
 
