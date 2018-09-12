@@ -840,6 +840,7 @@ impl AuthorityRound {
 	}
 
 	fn empty_steps(&self, from_step: U256, to_step: U256, parent_hash: H256) -> Vec<EmptyStep> {
+		// 使用过滤器,调用 collect 方法消费迭代器并创建一个 vector
 		self.empty_steps.lock().iter().filter(|e| {
 			U256::from(e.step) > from_step &&
 				U256::from(e.step) < to_step &&
