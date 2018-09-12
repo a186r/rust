@@ -138,7 +138,8 @@ pub struct AuthorityRoundParams {
 	/// Deliberately typed as u16 as too high of a value leads
 	/// to slow block issuance.
 	// 这里值大于u16最大值，会导致出块速度减慢
-	// TODO: 产生block的时间间隔
+	// 产生block的时间间隔
+	// 时隙
 	pub step_duration: u16,
 	/// Starting step,
 	pub start_step: Option<u64>,
