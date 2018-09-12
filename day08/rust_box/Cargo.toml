@@ -1,0 +1,6 @@
+[package]
+name = "rust_box"
+version = "0.1.0"
+authors = ["a186 <hi.aewalle@gmail.com>"]
+
+[dependencies]
