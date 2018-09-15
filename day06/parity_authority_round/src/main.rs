@@ -119,13 +119,15 @@ use ethereum_types::{H256, H520, Address, U128, U256};
 use parking_lot::{Mutex, RwLock};
 use unexpected::{Mismatch, OutOfBounds};
 
+// epoch
+// 确定性
 mod finality;
 
 // 将参数定义在结构体中，这样代码更明确
 // 任何Authority Round相关的字段都可以到这里来找
 // 可配置
 
-// Seal block 就是打包区块的意思
+// Seal block 就是打包区块的意思3
 // "Seal a block" is a proposed term to describe "mine a block" in a private chain.
 
 // TODO: 结构体 AuthorityRoundParams
@@ -138,24 +140,28 @@ pub struct AuthorityRoundParams {
 	/// Deliberately typed as u16 as too high of a value leads
 	/// to slow block issuance.
 	// 这里值大于u16最大值，会导致出块速度减慢
-	// 产生block的时间间隔
-	// 时隙
+	// 出块时间间隔
 	pub step_duration: u16,
-	/// Starting step,
+	/// 开始处块,
 	pub start_step: Option<u64>,
 	/// Valid validators.
+	// 验证人
 	pub validators: Box<ValidatorSet>,
 	/// Chain score validation transition block.
+	// 权重
 	pub validate_score_transition: u64,
 	/// Monotonic step validation transition block.
+	// step权重，比如A:B:C = 1:2:1 那么step就是time / duration % 4，B节点可以出块两次
 	pub validate_step_transition: u64,
 	/// Immediate transitions.
 	pub immediate_transitions: bool,
 	/// Block reward in base units.
+	// 出块奖励
 	pub block_reward: U256,
 	/// Block reward contract transition block.
 	pub block_reward_contract_transition: u64,
 	/// Block reward contract.
+	// 区块奖励合约
 	pub block_reward_contract: Option<BlockRewardContract>,
 	/// Number of accepted uncles transition block.
 	pub maximum_uncle_count_transition: u64,
@@ -212,25 +218,44 @@ impl From<ethjson::spec::AuthorityRoundParams> for AuthorityRoundParams {
 	}
 }
 
+
+// ------------------------------------------------------Step确定出块顺序，保证同步、一致性
+// step以usize类型储存
+// 载入、剩余时间、增量、校准、验证
+// 载入：使用AtomicUsize类型，调用store方法，将step存储在里面
+// 剩余时间：match expected_seconds来判断上一个step结束、_、None集中状态 TODO: rust match _
+// 增量：在AtomicOrdering::SeqCst中存储一个step，并判断是否超出usize最大值
+// 验证：节点之间会有时间出入，确保节点之间的时间差异不会很大，比如有三个节点：
+	// A：step = 100 / 10
+	// B：step = 113 / 10
+	// C：step = 300 / 10
+	// AtomicOrdering::SeqCst存储的step = 100 / 10
+	// 那么A节点的step就是正常的，B节点是可以等待的，C节点的step应该直接被拒绝
+	// C节点这里不是直接被拒绝，当发现C给我传入的step过大，直接调用calibrate校准方法，使用self计算出new_step，将new_step存储起来
+	// 然后load最新的step赋值给变量current
+
 // Helper for managing the step.
 // TODO: 结构体 Step
 // step辅助管理
 #[derive(Debug)]
 struct Step {
+	// 是否校准
 	calibrate: bool, // whether calibration is enabled.
+	// AtomicUsize是可以再线程之间安全共享的整数类型，这里用来对step做store、load、fetch_add等操作
 	inner: AtomicUsize,
+	// 时间间隔
 	duration: u16,
 }
 
 // 为结构体实现的方法
 impl Step {
 
-	// 将Step加载进来,返回一个usize类型的
+	// 从AtomicOrdering::SeqCst里面load 最新的step初始设置
 	fn load(&self) -> usize { self.inner.load(AtomicOrdering::SeqCst) }
 
-// 剩余时间，返回一个Duration
+	// 剩余时间，距离下一次出块的时间
 	fn duration_remaining(&self) -> Duration {
-		// 获取当前时间
+		// 先获取当前时间
 		let now = unix_now();
 
 		let expected_seconds = (self.load() as u64)
@@ -251,7 +276,7 @@ impl Step {
 
 	}
 
-// 
+// 增量
 	fn increment(&self) {
 		use std::usize;
 		// fetch_add won't panic on overflow but will rather wrap
@@ -266,28 +291,38 @@ impl Step {
 // 校准
 	fn calibrate(&self) {
 		if self.calibrate {
+			// 新的step = 当前时间秒数 / 出块时间
 			let new_step = unix_now().as_secs() / (self.duration as u64);
+			// store-存储一个值到Atomic整数中，使用order描述此操作的内存顺序
+			// 将new_step作为usize类型存储到AtomicOrdering::SeqCst中
 			self.inner.store(new_step as usize, AtomicOrdering::SeqCst);
 		}
 	}
 
-// TODO:
+// 最后做校验，验证
+// given传入的就是一个usize类型的step
 	fn check_future(&self, given: usize) -> Result<(), Option<OutOfBounds<u64>>> {
+
+		// 相当于是最大偏离值，允许的偏移量
 		const REJECTED_STEP_DRIFT: usize = 4;
 
 		// Verify if the step is correct.
+		// 如果当前step是正确的，直接返回OK 
 		if given <= self.load() {
 			return Ok(());
 		}
 
 		// Make absolutely sure that the given step is incorrect.
+		// 如果一个step不正确，通过self获取到当前的step
 		self.calibrate();
 		let current = self.load();
 
 		// reject blocks too far in the future
+		// step偏差太大了，被拒绝
 		if given > current + REJECTED_STEP_DRIFT {
 			Err(None)
 		// wait a bit for blocks in near future
+		// 等待
 		} else if given > current {
 			let d = self.duration as u64;
 			Err(Some(OutOfBounds {
@@ -301,23 +336,35 @@ impl Step {
 	}
 }
 
-// 权重计算
+// -----------------------------------------------------------权重
+// 权重计算,调整难度
 // Chain scoring: total weight is sqrt(U256::max_value())*height - step
-fn calculate_score(parent_step: U256, current_step: U256, current_empty_steps: U256) -> U256 {
+fn calculate_score(parent_step: U256,                                                                                                                                                                    : U256, current_empty_steps: U256) -> U256 {
 	U256::from(U128::max_value()) + parent_step - current_step + current_empty_steps
 }
 
 // TODO: 结构体 EpochManager
+// 确定性相关的，更多区块组成的时间概念
 // TODO: epoch
+// -----------------------------------------------------------Epoch
+// 一定数量的区块可以称为一个epoch，是在区块链上的一个时间概念，epoch之间会有一个过渡的问题
+// 以太坊挖矿需要额外的资源来挖掘：内存，使用GPU挖掘时，这意味这显卡上的内存，随着时间的推移，以太坊故意使采矿更加耗费内存，每隔固定的时间就调整一次。每30000个块就会有一个新的数据(DAG)用于挖掘新块。
+// 每个新的30000个块被称作epoch，epoch开关是在下载DAG文件的时候加载的。所以就涉及到epoch之间的过渡问题
+// 所以下面的结构体包括的就是epoch的hash、epoch的过渡数(应该指的是从上个epoch过渡之后又生成了多少区块)、确定性检查、是否强制过渡？
+// Epoch在以太坊中默认为30000，区块高度为3w的整数倍时，到达Epoch时间点
 struct EpochManager {
 	// 过渡hash
 	epoch_transition_hash: H256,
 	epoch_transition_number: BlockNumber,
+	// 确定性检查
 	finality_checker: RollingFinality,
+	// 是否强制(这里应该是是否强制进行确定性检查)
 	force: bool,
 }
 
 impl EpochManager {
+
+	// 一个空的epoch，参数都是默认值，区块数为0，相当于是一个还未开始的epoch
 	fn blank() -> Self {
 		EpochManager {
 			epoch_transition_hash: H256::default(),
@@ -328,16 +375,22 @@ impl EpochManager {
 	}
 
 
-
+// TODO:2.zoom_to没理解在做什么
+// 根据给定的header调整epoch，如果调整成功返回true
 	// zoom to epoch for given header. returns true if succeeded, false otherwise.
 	fn zoom_to(&mut self, client: &EngineClient, machine: &EthereumMachine, validators: &ValidatorSet, header: &Header) -> bool {
+
+		// 最后的块是否是父块 
+		// TODO:
+		// subchain_head() 
+		// parent_hash() 
 		let last_was_parent = self.finality_checker.subchain_head() == Some(header.parent_hash().clone());
 
-		// early exit for current target == chain head, but only if the epochs are
+		// early exit for current target == chain head, but only if the epochs are 
 		// the same.
-		if last_was_parent && !self.force {
-			return true;
-		}
+		if last_was_parent && !self.force { 
+			return true; 
+		} 
 
 		self.force = false;
 		debug!(target: "engine", "Zooming to epoch for block {}", header.hash());
@@ -346,6 +399,7 @@ impl EpochManager {
 		// forks it will only need to be called for the block directly after
 		// epoch transition, in which case it will be O(1) and require a single
 		// DB lookup.
+		// 
 		let last_transition = match client.epoch_transition_for(*header.parent_hash()) {
 			Some(t) => t,
 			None => {
@@ -362,7 +416,7 @@ impl EpochManager {
 				.expect("proof produced by this engine; therefore it is valid; qed");
 
 			trace!(target: "engine", "extracting epoch set for epoch ({}, {}) signalled at #{}",
-				last_transition.block_number, last_transition.block_hash, signal_number);
+				last_transitifinality_checkeron.block_number, last_transition.block_hash, signal_number);
 
 			let first = signal_number == 0;
 			let epoch_set = validators.epoch_set(
@@ -387,35 +441,59 @@ impl EpochManager {
 	// note new epoch hash. this will force the next block to re-load
 	// the epoch set
 	// TODO: optimize and don't require re-loading after epoch change.
+	// 注意新epoch的hash，这会强制下一个块重新家在epoch set
 	fn note_new_epoch(&mut self) {
 		self.force = true;
 	}
 
 	/// Get validator set. Zoom to the correct epoch first.
+	// 获取epoch中的验证者们
 	fn validators(&self) -> &SimpleList {
 		self.finality_checker.validators()
 	}
 }
 
+
+// 出块确定性，共识
 // TODO:关于Step：EmptyStep、SealedEmptyStep、PermissionedStep
+// TODO:空消息、空消息打包到块、
 
 // 轮到出块时却没有交易，其他验证者积累这些信息，然后将他们作为证据包含在proof中
 
 // TODO:Seal是做什么用的
+// 区块头，封装的，打包
+// 状态的根，合约里每个值，验证交易，交易执行-上一个区块状态根-当前区块根
+// 另一个是event日志的根
+// 1，状态根(组织，状态回滚，状态树M默克尔树P字典排序T)
+// TODO:区块信息
 /// A message broadcast by authorities when it's their turn to seal a block but there are no
 /// transactions. Other authorities accumulate these messages and later include them in the seal as
 /// proof.
 /// 
 // TODO: 结构体 EmptyStep，这里面的EmptyStep是做什么用的,还有下面的SealedEmptyStep
+
+// ----------------------------------------------------------------------------emptyStep
+// 实现了空Step的一些方法，一个EmptyStep包含一个签名，一个step和一个父区块hash
 #[derive(Clone, Debug)]
 struct EmptyStep {
 	//H520、H256 Unformatted binary data of fixed length. 来自ethereum-types
 	signature: H520,
+	// step
 	step: usize,
+	// 父hsah
 	parent_hash: H256,
 }
 
+
+// EmptyStep相比SealedEmptyStep多了parent_hash,那多的这个parent_hash代表什么呢，直到要生成新区块但是还没有交易只是有一些message，我们将这些message打包起来并且经过验证
+// 就叫做SealedEmptyStep，那么轮到生成区块的时候，就将这个空区块放在链上，所以它只比SealedEmptyStep多了一个父hash
+
+// 当轮到节点打包区块的时候，它发现这个区块没有交易，但是有一些消息，那这个节点就将这些消息存储起来，然后将其打包
 impl EmptyStep {
+
+	// 使用sealed_empty_step和parent_hash返回一个EmptyStep
+	// 打包一个EmptyStep
+	// EmptyStep相比SealedEmptyStep多了parent_hash
 	fn from_sealed(sealed_empty_step: SealedEmptyStep, parent_hash: &H256) -> EmptyStep {
 		let signature = sealed_empty_step.signature;
 		let step = sealed_empty_step.step;
@@ -423,20 +501,27 @@ impl EmptyStep {
 		EmptyStep { signature, step, parent_hash }
 	}
 
+// 验证
 	fn verify(&self, validators: &ValidatorSet) -> Result<bool, Error> {
 		let message = keccak(empty_step_rlp(self.step, &self.parent_hash));
 		let correct_proposer = step_proposer(validators, &self.parent_hash, self.step);
 
+		// 调用ethkey模块中的verify_address接口
 		ethkey::verify_address(&correct_proposer, &self.signature.into(), &message)
 			.map_err(|e| e.into())
 	}
 
+
+// 通过签名和消息还原公钥，再通过公钥返回地址
 	fn author(&self) -> Result<Address, Error> {
 		let message = keccak(empty_step_rlp(self.step, &self.parent_hash));
+		// 调用recover接口
 		let public = ethkey::recover(&self.signature.into(), &message)?;
 		Ok(ethkey::public_to_address(&public))
 	}
 
+// 传入EmptyStep，得到他的签名和step，返回一个sealedEmptyStep
+// 相当于是还原状态，EmptyStep去掉父区块hash就是一个SealedEmptyStep，相当于一个还没有放在链上的空区块
 	fn sealed(&self) -> SealedEmptyStep {
 		let signature = self.signature;
 		let step = self.step;
@@ -444,8 +529,6 @@ impl EmptyStep {
 	}
 }
 
-
-// TODO: 这里加解密是为了做什么？就是为了前文的验证数据？
 // 为结构体实现trait
 impl fmt::Display for EmptyStep {
 	fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -493,8 +576,9 @@ pub fn empty_step_rlp(step: usize, parent_hash: &H256) -> Vec<u8> {
 /// the `parent_hash` in order to save space. The included signature is of the original empty step
 /// message, which can be reconstructed by using the parent hash of the block in which this sealed
 /// empty message is included.
-/// 
-// TODO:比EmptyStep少了一个parent_hash字段
+// 打包一些空step消息，唯一的区别是它没有"parent_hash"以节省空间，包含的签名是原始的空step消息，可以使用打包空step消息的区块的父hash来重建
+// -------------------------------------------------------SealedEmptyStep
+// 实现编码解码的方法
 struct SealedEmptyStep {
 	signature: H520,
 	step: usize,
@@ -517,12 +601,12 @@ impl Decodable for SealedEmptyStep {
 	}
 }
 
+// 许可Step
 struct PermissionedStep {
 	inner: Step,
 	can_propose: AtomicBool,
 }
 
-// 引擎使用权威证明BFT共识
 /// Engine using `AuthorityRound` proof-of-authority BFT consensus.
 pub struct AuthorityRound {
 	transition_service: IoService<()>,
@@ -547,6 +631,7 @@ pub struct AuthorityRound {
 }
 
 // header-chain validator.
+// 
 struct EpochVerifier {
 	step: Arc<PermissionedStep>,
 	subchain_validators: SimpleList,
@@ -554,14 +639,19 @@ struct EpochVerifier {
 }
 
 impl super::EpochVerifier<EthereumMachine> for EpochVerifier {
+
+	// 一个简单的校验
 	fn verify_light(&self, header: &Header) -> Result<(), Error> {
 		// Validate the timestamp
+		// 校验时间戳
 		verify_timestamp(&self.step.inner, header_step(header, self.empty_steps_transition)?)?;
 		// always check the seal since it's fast.
 		// nothing heavier to do.
+		// 因为出块速度快，所以要检查sealTODO:前面提到过，seal会和分叉有关系
 		verify_external(header, &self.subchain_validators, self.empty_steps_transition)
 	}
 
+	// 检查确定性证明
 	fn check_finality_proof(&self, proof: &[u8]) -> Option<Vec<H256>> {
 		let mut finality_checker = RollingFinality::blank(self.subchain_validators.clone().into_inner());
 		let mut finalized = Vec::new();
@@ -667,8 +757,7 @@ fn header_empty_steps_signers(header: &Header, empty_steps_transition: u64) -> R
 	}
 }
 
-// 
-
+// 传入
 fn step_proposer(validators: &ValidatorSet, bh: &H256, step: usize) -> Address {
 	let proposer = validators.get(bh, step);
 	trace!(target: "engine", "Fetched proposer for step {}: {}", step, proposer);
@@ -1440,10 +1529,6 @@ impl Engine<EthereumMachine> for AuthorityRound {
 
 					if let Ok(empty_step_signers) = header_empty_steps_signers(&header, self.empty_steps_transition) {
 						let res = (hash, signers);
-					The genesis seal should not be changed unless a hard fork is conducted.
-
-If malicious authorities are possible then --force-sealing is advised, this will ensure that the correct chain is the longest (making it BFT with finality of authorities_count * step_duration given no network partitions).	trace!(target: "finality", "Ancestry iteration: yielding {:?}", res);
-
 						hash = header.parent_hash().clone();
 						parent_empty_steps_signers = empty_step_signers;
 
