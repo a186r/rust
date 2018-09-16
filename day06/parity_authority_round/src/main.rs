@@ -127,7 +127,7 @@ mod finality;
 // 任何Authority Round相关的字段都可以到这里来找
 // 可配置
 
-// Seal block 就是打包区块的意思3
+// "Seal a block"是一个在私有链中描述""mine a block"的术语，其实就是打包一个区块
 // "Seal a block" is a proposed term to describe "mine a block" in a private chain.
 
 // TODO: 结构体 AuthorityRoundParams
@@ -339,6 +339,7 @@ impl Step {
 // -----------------------------------------------------------权重
 // 权重计算,调整难度
 // Chain scoring: total weight is sqrt(U256::max_value())*height - step
+// 链的得分，每条链都有一个得分，正常的节点会在得分最高的那条链上打包
 fn calculate_score(parent_step: U256,                                                                                                                                                                    : U256, current_empty_steps: U256) -> U256 {
 	U256::from(U128::max_value()) + parent_step - current_step + current_empty_steps
 }
@@ -375,9 +376,10 @@ impl EpochManager {
 	}
 
 
-// TODO:2.zoom_to没理解在做什么
+// TODO:2.zoom_to
 // 根据给定的header调整epoch，如果调整成功返回true
 	// zoom to epoch for given header. returns true if succeeded, false otherwise.
+	// 缩放到给定区块头的epoch
 	fn zoom_to(&mut self, client: &EngineClient, machine: &EthereumMachine, validators: &ValidatorSet, header: &Header) -> bool {
 
 		// 最后的块是否是父块 
@@ -411,6 +413,7 @@ impl EpochManager {
 		};
 
 		// extract other epoch set if it's not the same as the last.
+		// 如果他与上一个不同，则提取其他的epoch set
 		if last_transition.block_hash != self.epoch_transition_hash {
 			let (signal_number, set_proof, _) = destructure_proofs(&last_transition.proof)
 				.expect("proof produced by this engine; therefore it is valid; qed");
@@ -441,7 +444,7 @@ impl EpochManager {
 	// note new epoch hash. this will force the next block to re-load
 	// the epoch set
 	// TODO: optimize and don't require re-loading after epoch change.
-	// 注意新epoch的hash，这会强制下一个块重新家在epoch set
+	// 注意新epoch的hash，这会强制下一个块重新加载epoch set
 	fn note_new_epoch(&mut self) {
 		self.force = true;
 	}
@@ -484,11 +487,9 @@ struct EmptyStep {
 	parent_hash: H256,
 }
 
+// 当轮到节点打包的时候，发现这期间只有一些消息，但是没有任何交易，他们就会验证这些消息，然后广播，会一直积累这些消息，直到下一个包含交易的区块生成的时候，将这些消息一并打包进去，然后节点们获得相应的奖励
+// SealedEmptyStep就是将这些消息积累起来
 
-// EmptyStep相比SealedEmptyStep多了parent_hash,那多的这个parent_hash代表什么呢，直到要生成新区块但是还没有交易只是有一些message，我们将这些message打包起来并且经过验证
-// 就叫做SealedEmptyStep，那么轮到生成区块的时候，就将这个空区块放在链上，所以它只比SealedEmptyStep多了一个父hash
-
-// 当轮到节点打包区块的时候，它发现这个区块没有交易，但是有一些消息，那这个节点就将这些消息存储起来，然后将其打包
 impl EmptyStep {
 
 	// 使用sealed_empty_step和parent_hash返回一个EmptyStep
@@ -502,6 +503,8 @@ impl EmptyStep {
 	}
 
 // 验证
+// 这里验证的是一些验证者和一个EmptyStep，返回bool类型
+// 目的：验证这个EmptyStep是否是这些节点验证人签名的
 	fn verify(&self, validators: &ValidatorSet) -> Result<bool, Error> {
 		let message = keccak(empty_step_rlp(self.step, &self.parent_hash));
 		let correct_proposer = step_proposer(validators, &self.parent_hash, self.step);
@@ -521,7 +524,7 @@ impl EmptyStep {
 	}
 
 // 传入EmptyStep，得到他的签名和step，返回一个sealedEmptyStep
-// 相当于是还原状态，EmptyStep去掉父区块hash就是一个SealedEmptyStep，相当于一个还没有放在链上的空区块
+// 目的：将EmptyStep打包
 	fn sealed(&self) -> SealedEmptyStep {
 		let signature = self.signature;
 		let step = self.step;
@@ -559,13 +562,16 @@ impl Decodable for EmptyStep {
 	}
 }
 
+
+// 两个编解码相关的方法
+// 这个是将全部的empty_step输出为u8类型的Vec
 pub fn empty_step_full_rlp(signature: &H520, empty_step_rlp: &[u8]) -> Vec<u8> {
 	let mut s = RlpStream::new_list(2);
 	s.append(signature).append_raw(empty_step_rlp, 1);
 	s.out()
 }
 
-// 传入step和parent hash，返回一个u8类型的集合
+// 这个是将一个empty_step输出为u8类型的Vec
 pub fn empty_step_rlp(step: usize, parent_hash: &H256) -> Vec<u8> {
 	let mut s = RlpStream::new_list(2);
 	s.append(&step).append(parent_hash);
@@ -577,8 +583,11 @@ pub fn empty_step_rlp(step: usize, parent_hash: &H256) -> Vec<u8> {
 /// message, which can be reconstructed by using the parent hash of the block in which this sealed
 /// empty message is included.
 // 打包一些空step消息，唯一的区别是它没有"parent_hash"以节省空间，包含的签名是原始的空step消息，可以使用打包空step消息的区块的父hash来重建
+
+// 将一个empty step消息打包到一个seal中，唯一的不同是为了节省空间它没有parent_hash。
+// 一开始大家在轮到step的时候，发现没有交易，只有一些消息，大家就将当前step的消息签名，这个就是EmptyStep，包含一个parent_hash，做一些校验，并且节点验证人会去签名，
+// 一直等等等等到一个有交易的块了，大家就将攒起来的这些EmptyStep去掉parent成为SealedEmptyStep，将其打包进这个有交易的块中。
 // -------------------------------------------------------SealedEmptyStep
-// 实现编码解码的方法
 struct SealedEmptyStep {
 	signature: H520,
 	step: usize,
@@ -601,7 +610,7 @@ impl Decodable for SealedEmptyStep {
 	}
 }
 
-// 许可Step
+// 许可的Step
 struct PermissionedStep {
 	inner: Step,
 	can_propose: AtomicBool,
@@ -610,7 +619,7 @@ struct PermissionedStep {
 /// Engine using `AuthorityRound` proof-of-authority BFT consensus.
 pub struct AuthorityRound {
 	transition_service: IoService<()>,
-	// 这里的step是一个 PermissionedStep
+	// 这里接受一个可提议的Step
 	step: Arc<PermissionedStep>,
 	client: Arc<RwLock<Option<Weak<EngineClient>>>>,
 	signer: RwLock<EngineSigner>,
@@ -631,10 +640,13 @@ pub struct AuthorityRound {
 }
 
 // header-chain validator.
-// 
+// epoch验证，验证一段epoch的step、验证人、emptystep是都合法
 struct EpochVerifier {
+	// 被许可的Step
 	step: Arc<PermissionedStep>,
+	// 子链验证人
 	subchain_validators: SimpleList,
+	// emptystep过度
 	empty_steps_transition: u64,
 }
 
@@ -647,13 +659,15 @@ impl super::EpochVerifier<EthereumMachine> for EpochVerifier {
 		verify_timestamp(&self.step.inner, header_step(header, self.empty_steps_transition)?)?;
 		// always check the seal since it's fast.
 		// nothing heavier to do.
-		// 因为出块速度快，所以要检查sealTODO:前面提到过，seal会和分叉有关系
+		// 因为出块速度快，所以要检查seal
 		verify_external(header, &self.subchain_validators, self.empty_steps_transition)
 	}
 
-	// 检查确定性证明
+	// 检查有没有最终敲定
 	fn check_finality_proof(&self, proof: &[u8]) -> Option<Vec<H256>> {
 		let mut finality_checker = RollingFinality::blank(self.subchain_validators.clone().into_inner());
+
+		// 敲定者,应该是确定这个区块是没问题的验证人,是一个列表
 		let mut finalized = Vec::new();
 
 		let headers: Vec<Header> = Rlp::new(proof).as_list().ok()?;
@@ -662,6 +676,7 @@ impl super::EpochVerifier<EthereumMachine> for EpochVerifier {
 			let mut push_header = |parent_header: &Header, header: Option<&Header>| {
 				// ensure all headers have correct number of seal fields so we can `verify_external`
 				// and get `empty_steps` without panic.
+				// 确保所有区块头都有正确数量的seal字段,以便于我们可以做一些验证,否则抛出异常
 				if parent_header.seal().len() != header_expected_seal_fields(parent_header, self.empty_steps_transition) {
 					return None
 				}
@@ -670,8 +685,10 @@ impl super::EpochVerifier<EthereumMachine> for EpochVerifier {
 				}
 
 				// `verify_external` checks that signature is correct and author == signer.
+				// 检查签名是正确的,并保证author == signer
 				verify_external(parent_header, &self.subchain_validators, self.empty_steps_transition).ok()?;
 
+				//打包的验证人本身就是这个区块的一个签名人(signer) 
 				let mut signers = match header {
 					Some(header) => header_empty_steps_signers(header, self.empty_steps_transition).ok()?,
 					_ => Vec::new(),
@@ -697,6 +714,7 @@ impl super::EpochVerifier<EthereumMachine> for EpochVerifier {
 	}
 }
 
+// 获取到一个有效的seal的hash
 fn header_seal_hash(header: &Header, empty_steps_rlp: Option<&[u8]>) -> H256 {
 	match empty_steps_rlp {
 		Some(empty_steps_rlp) => {
@@ -757,13 +775,15 @@ fn header_empty_steps_signers(header: &Header, empty_steps_transition: u64) -> R
 	}
 }
 
-// 传入
+// 这里是一个step_propose，应该是一个提议者，就是在发现没有交易只有一些消息的时候，这些验证者提议将消息签名
+// 这里获取到哪一个Step的提议者地址
 fn step_proposer(validators: &ValidatorSet, bh: &H256, step: usize) -> Address {
 	let proposer = validators.get(bh, step);
 	trace!(target: "engine", "Fetched proposer for step {}: {}", step, proposer);
 	proposer
 }
 
+// 这里则是验证一个地址是否是提议者
 fn is_step_proposer(validators: &ValidatorSet, bh: &H256, step: usize, address: &Address) -> bool {
 	step_proposer(validators, bh, step) == *address
 }
@@ -786,12 +806,17 @@ fn verify_timestamp(step: &Step, header_step: usize) -> Result<(), BlockError> {
 	}
 }
 
-// 验证
+// 外部验证
 fn verify_external(header: &Header, validators: &ValidatorSet, empty_steps_transition: u64) -> Result<(), Error> {
 	let header_step = header_step(header, empty_steps_transition)?;
 
 	let proposer_signature = header_signature(header, empty_steps_transition)?;
+
+	// 找到这个区块的提议发起人
 	let correct_proposer = validators.get(header.parent_hash(), header_step);
+
+	// 每一个区块都有一个leader或者author,也就是打包这个区块的验证人,这个角色在打包区块之后是要对当前区块发起提议的,所以首先要验证决议发起人是否是有效的
+	// 如果这个区块头的author不等于这个区块的提议发起者,那这个提议者就是无效的
 	let is_invalid_proposer = *header.author() != correct_proposer || {
 		let empty_steps_rlp = if header.number() >= empty_steps_transition {
 			Some(header_empty_steps_raw(header))
@@ -803,6 +828,7 @@ fn verify_external(header: &Header, validators: &ValidatorSet, empty_steps_trans
 		!ethkey::verify_address(&correct_proposer, &proposer_signature, &header_seal_hash)?
 	};
 
+	// 最后对验证结果做出反馈
 	if is_invalid_proposer {
 		trace!(target: "engine", "verify_block_external: bad proposer for step: {}", header_step);
 		Err(EngineError::NotProposer(Mismatch { expected: correct_proposer, found: header.author().clone() }))?
@@ -1002,6 +1028,8 @@ fn unix_now() -> Duration {
 	UNIX_EPOCH.elapsed().expect("Valid time has to be set in your system.")
 }
 
+// 过渡处理
+// 在transition的过程中会涉及到超市的问题
 struct TransitionHandler {
 	step: Arc<PermissionedStep>,
 	client: Arc<RwLock<Option<Weak<EngineClient>>>>,
@@ -1025,6 +1053,8 @@ impl IoHandler<()> for TransitionHandler {
 			// NOTE we might be lagging by couple of steps in case the timeout
 			// has not been called fast enough.
 			// Make sure to advance up to the actual step.
+
+			// 如果超时可能就会延后几部
 			while AsMillis::as_millis(&self.step.inner.duration_remaining()) == 0 {
 				self.step.inner.increment();
 				self.step.can_propose.store(true, AtomicOrdering::SeqCst);
@@ -1035,6 +1065,7 @@ impl IoHandler<()> for TransitionHandler {
 				}
 			}
 
+			// 这里应该就是前进道合适的步骤,调用register_timer_once
 			let next_run_at = AsMillis::as_millis(&self.step.inner.duration_remaining()) >> 2;
 			io.register_timer_once(ENGINE_TIMEOUT_TOKEN, Duration::from_millis(next_run_at))
 				.unwrap_or_else(|e| warn!(target: "engine", "Failed to restart consensus step timer: {}.", e))
@@ -1044,6 +1075,7 @@ impl IoHandler<()> for TransitionHandler {
 
 
 // 为结构体AuthorityRound实现trait Engine
+// 这里应该是引擎AuthorityRound的细节实现
 impl Engine<EthereumMachine> for AuthorityRound {
 	fn name(&self) -> &str { "AuthorityRound" }
 
@@ -1051,6 +1083,8 @@ impl Engine<EthereumMachine> for AuthorityRound {
 
 	/// Three fields - consensus step and the corresponding proposer signature, and a list of empty
 	/// step messages (which should be empty if no steps are skipped)
+	/// 
+	/// 一共三个字段:共识step、相应的提议者签名、一个空列表
 	fn seal_fields(&self, header: &Header) -> usize {
 		header_expected_seal_fields(header, self.empty_steps_transition)
 	}
@@ -1104,6 +1138,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		}
 	}
 
+	// 获取父块的一些信息
 	fn populate_from_parent(&self, header: &mut Header, parent: &Header) {
 		let parent_step = header_step(parent, self.empty_steps_transition).expect("Header has been verified; qed");
 		let current_step = self.step.inner.load();
@@ -1114,7 +1149,9 @@ impl Engine<EthereumMachine> for AuthorityRound {
 			0
 		};
 
+		// 计算链的得分
 		let score = calculate_score(parent_step.into(), current_step.into(), current_empty_steps_len.into());
+		// 设置难度
 		header.set_difficulty(score);
 	}
 
@@ -1123,6 +1160,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		Some(self.signer.read().is_some())
 	}
 
+// 处理消息
 	fn handle_message(&self, rlp: &[u8]) -> Result<(), EngineError> {
 		fn fmt_err<T: ::std::fmt::Debug>(x: T) -> EngineError {
 			EngineError::MalformedMessage(format!("{:?}", x))
@@ -1131,6 +1169,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		let rlp = Rlp::new(rlp);
 		let empty_step: EmptyStep = rlp.as_val().map_err(fmt_err)?;;
 
+		// empty_step需要传入验证人进行验证
 		if empty_step.verify(&*self.validators).unwrap_or(false) {
 			if self.step.inner.check_future(empty_step.step).is_ok() {
 				trace!(target: "engine", "handle_message: received empty step message {:?}", empty_step);
@@ -1150,10 +1189,17 @@ impl Engine<EthereumMachine> for AuthorityRound {
 	/// This operation is synchronous and may (quite reasonably) not be available, in which case
 	/// `Seal::None` will be returned.
 	// 操作是同步的，如果不可用会返回Seal::None
-	// 生成seal
+	// 正常的打包
+	// 这里是整个打包的过程
+	// 包含验证检查，过滤消息，计算链的得分，计算难度，校验当前step是否合法，检查是否允许发起emptystep等等
+	// 如果没法打包的话返回Seal::None
 	fn generate_seal(&self, block: &ExecutedBlock, parent: &Header) -> Seal {
 		// first check to avoid generating signature most of the time
 		// (but there's still a race to the `compare_and_swap`)
+
+		// 这里首先要检查，以避免花费太多时间签名
+		// (但是还是会有比较和交换的竞争存在)
+		// 如果step.can_propose是false，直接返回Seal::None
 		if !self.step.can_propose.load(AtomicOrdering::SeqCst) {
 			trace!(target: "engine", "Aborting seal generation. Can't propose.");
 			return Seal::None;
@@ -1166,12 +1212,14 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		let step = self.step.inner.load();
 
 		// filter messages from old and future steps and different parents
+		// 过滤消息
 		let empty_steps = if header.number() >= self.empty_steps_transition {
 			self.empty_steps(parent_step.into(), step.into(), *header.parent_hash())
 		} else {
 			Vec::new()
 		};
 
+		// 通过得分计算难度
 		let expected_diff = calculate_score(parent_step, step.into(), empty_steps.len().into());
 
 		if header.difficulty() != &expected_diff {
@@ -1193,9 +1241,12 @@ impl Engine<EthereumMachine> for AuthorityRound {
 			Ok(ok) => ok,
 		};
 
+		// 这里应该是一个step被它的auther发起提议
 		if is_step_proposer(&*validators, header.parent_hash(), step, header.author()) {
 			// this is guarded against by `can_propose` unless the block was signed
 			// on the same step (implies same key) and on a different node.
+			// 这是由can_propose保护的，除非该块被签名
+			// 不能发生在parent step
 			if parent_step == step.into() {
 				warn!("Attempted to seal block on the same step as parent. Is this authority sealing with more than one node?");
 				return Seal::None;
@@ -1204,6 +1255,8 @@ impl Engine<EthereumMachine> for AuthorityRound {
 			// if there are no transactions to include in the block, we don't seal and instead broadcast a signed
 			// `EmptyStep(step, parent_hash)` message. If we exceed the maximum amount of `empty_step` rounds we proceed
 			// with the seal.
+
+			// 这里是不包含任何交易的区块，我们会广播一个签名后的EmptyStep消息而不是打包这个区块，如果超出了empty_step的最大值，我们继续seal
 			if header.number() >= self.empty_steps_transition &&
 				block.transactions().is_empty() &&
 				empty_steps.len() < self.maximum_empty_steps {
@@ -1223,14 +1276,18 @@ impl Engine<EthereumMachine> for AuthorityRound {
 				trace!(target: "engine", "generate_seal: Issuing a block for step {}.", step);
 
 				// only issue the seal if we were the first to reach the compare_and_swap.
+				// 哥哥节点之间会有交换然后比较的过程(从提议者那里拿到块，然后节点之间比较块是否是同一个)，如果是第一个得到这个块的，只确认即可
 				if self.step.can_propose.compare_and_swap(true, false, AtomicOrdering::SeqCst) {
 					// we can drop all accumulated empty step messages that are
 					// older than the parent step since we're including them in
 					// the seal
+					// 在我们将消息打包之后，就可以删除所有比parent_step还早的那些消息了
 					self.clear_empty_steps(parent_step);
 
 					// report any skipped primaries between the parent block and
 					// the block we're sealing, unless we have empty steps enabled
+
+					// 举报那些跳过出块的节点，除非我们设置了emptystep开启
 					if header.number() < self.empty_steps_transition {
 						self.report_skipped(header, step, u64::from(parent_step) as usize, &*validators, set_number);
 					}
@@ -1261,6 +1318,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		Ok(())
 	}
 
+// 对新产生的块做检查？
 	fn on_new_block(
 		&self,
 		block: &mut ExecutedBlock,
@@ -1269,6 +1327,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 	) -> Result<(), Error> {
 		// with immediate transitions, we don't use the epoch mechanism anyway.
 		// the genesis is always considered an epoch, but we ignore it intentionally.
+		// 即时过渡，不启用epoch机制
 		if self.immediate_transitions || !epoch_begin { return Ok(()) }
 
 		// genesis is never a new block, but might as well check.
@@ -1290,11 +1349,13 @@ impl Engine<EthereumMachine> for AuthorityRound {
 	}
 
 	/// Apply the block reward on finalisation of the block.
+	// / 块打包完成了，搞定了之后分配区块奖励
 	fn on_close_block(&self, block: &mut ExecutedBlock) -> Result<(), Error> {
 		let mut beneficiaries = Vec::new();
 		if block.header().number() >= self.empty_steps_transition {
 			let empty_steps = if block.header().seal().is_empty() {
 				// this is a new block, calculate rewards based on the empty steps messages we have accumulated
+				// 这是一个新的区块，根据积累的消息计算奖励
 				let client = match self.client.read().as_ref().and_then(|weak| weak.upgrade()) {
 					Some(client) => client,
 					None => {
@@ -1324,6 +1385,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		let author = *block.header().author();
 		beneficiaries.push((author, RewardKind::Author));
 
+		// 这里是具体的计算奖励
 		let rewards: Vec<_> = match self.block_reward_contract {
 			Some(ref c) if block.header().number() >= self.block_reward_contract_transition => {
 				let mut call = super::default_system_or_code_call(&self.machine, block);
@@ -1340,6 +1402,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 	}
 
 	/// Check the number of seal fields.
+	// / 检查打包的字段是不是够，需要三个字段 达成共识的step、相应的提议者签名、一个空列表
 	fn verify_block_basic(&self, header: &Header) -> Result<(), Error> {
 		if header.number() >= self.validate_score_transition && *header.difficulty() >= U256::from(U128::max_value()) {
 			return Err(From::from(BlockError::DifficultyOutOfBounds(
@@ -1347,6 +1410,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 			)));
 		}
 
+		// 验证时间戳
 		match verify_timestamp(&self.step.inner, header_step(header, self.empty_steps_transition)?) {
 			Err(BlockError::InvalidSeal) => {
 				// This check runs in Phase 1 where there is no guarantee that the parent block is
@@ -1369,7 +1433,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		}
 	}
 
-// 执行步骤并且验证gas限制
+	// 执行步骤并且验证gas限制
 	/// Do the step and gas limit validation.
 	fn verify_block_family(&self, header: &Header, parent: &Header) -> Result<(), Error> {
 		let step = header_step(header, self.empty_steps_transition)?;
@@ -1378,6 +1442,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		let (validators, set_number) = self.epoch_set(header)?;
 
 		// Ensure header is from the step after parent.
+		// 确保区块头是在他的父区块之后的
 		if step == parent_step
 			|| (header.number() >= self.validate_step_transition && step <= parent_step) {
 			trace!(target: "engine", "Multiple blocks proposed for step {}.", parent_step);
@@ -1388,6 +1453,8 @@ impl Engine<EthereumMachine> for AuthorityRound {
 
 		// If empty step messages are enabled we will validate the messages in the seal, missing messages are not
 		// reported as there's no way to tell whether the empty step message was never sent or simply not included.
+
+		// 如果启用了emptystep消息，我们将会验证seal中存在的消息，无法检测已丢失的消息，因为无法判定消息是否没有被发送，或者根本没有存在过。
 		let empty_steps_len = if header.number() >= self.empty_steps_transition {
 			let validate_empty_steps = || -> Result<usize, Error> {
 				let empty_steps = header_empty_steps(header)?;
@@ -1435,6 +1502,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 	}
 
 	// Check the validators.
+	// 检查验证人
 	fn verify_block_external(&self, header: &Header) -> Result<(), Error> {
 		let (validators, set_number) = self.epoch_set(header)?;
 
@@ -1447,6 +1515,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 			},
 			Ok(_) => {
 				// we can drop all accumulated empty step messages that are older than this header's step
+				// 可以丢掉所有更早的空消息
 				let header_step = header_step(header, self.empty_steps_transition)?;
 				self.clear_empty_steps(header_step.into());
 			},
@@ -1455,6 +1524,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		res
 	}
 
+	// 创世块epoch数据
 	fn genesis_epoch_data(&self, header: &Header, call: &Call) -> Result<Vec<u8>, String> {
 		self.validators.genesis_epoch_data(header, call)
 			.map(|set_proof| combine_proofs(0, &set_proof, &[]))
@@ -1469,6 +1539,7 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		self.validators.signals_epoch_end(first, header, aux)
 	}
 
+// 检查epoch是否已经结束了
 	fn is_epoch_end(
 		&self,
 		chain_head: &Header,
@@ -1476,11 +1547,13 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		transition_store: &super::PendingTransitionStore,
 	) -> Option<Vec<u8>> {
 		// epochs only matter if we want to support light clients.
+		// 如果我们想支持light客户端，epoch才有意义，比如epoch设置成3w个块一个epoch，那么epoch互相衔接，我们在客户端只需要同步最近的一个epoch即可
 		if self.immediate_transitions { return None }
 
 		let first = chain_head.number() == 0;
 
 		// apply immediate transitions.
+		// 应用即时过渡
 		if let Some(change) = self.validators.is_epoch_end(first, chain_head) {
 			let change = combine_proofs(chain_head.number(), &change, &[]);
 			return Some(change)
@@ -1495,14 +1568,19 @@ impl Engine<EthereumMachine> for AuthorityRound {
 		};
 
 		// find most recently finalized blocks, then check transition store for pending transitions.
+		// 查找最近完成的块，然后为待处理转换检查装换存储
 		let mut epoch_manager = self.epoch_manager.lock();
 		if !epoch_manager.zoom_to(&*client, &self.machine, &*self.validators, chain_head) {
 			return None;
 		}
 
+
 		if epoch_manager.finality_checker.subchain_head() != Some(*chain_head.parent_hash()) {
 			// build new finality checker from ancestry of chain head,
 			// not including chain head itself yet.
+
+			// 从链头创建新的确定性检查器，不包含链头本身
+			// 应该也是用于epoch的，轻客户端
 			trace!(target: "finality", "Building finality up to parent of {} ({})",
 				chain_head.hash(), chain_head.parent_hash());
 
@@ -1520,6 +1598,8 @@ impl Engine<EthereumMachine> for AuthorityRound {
 			// walk the chain within current epoch backwards.
 			// author == ec_recover(sig) known since the blocks are in the DB.
 			// the empty steps messages in a header signal approval of the parent header.
+
+			// 在当前的epoch之后生成链
 			let ancestry_iter = itertools::repeat_call(move || {
 				chain(hash).and_then(|header| {
 					if header.number() == 0 { return None }
@@ -1582,6 +1662,9 @@ impl Engine<EthereumMachine> for AuthorityRound {
 						// This way, upon encountering an epoch change, the proposer from the
 						// new set will be forced to wait until the next step to avoid sealing a
 						// block that breaks the invariant that the parent's step < the block's step.
+
+						// 在这里关闭can_propose，因为提议可能来自单个step的旧set和新set，可能会相互干扰
+						// 这样，当遇到epoch切换时，来自新的提议者将被迫等待到下个epoch
 						self.step.can_propose.store(false, AtomicOrdering::SeqCst);
 						return Some(combine_proofs(signal_number, &pending.proof, &*finality_proof));
 					}
