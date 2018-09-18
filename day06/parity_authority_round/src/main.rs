@@ -338,9 +338,10 @@ impl Step {
 
 // -----------------------------------------------------------权重
 // 权重计算,调整难度
-// Chain scoring: total weight is sqrt(U256::max_value())*height - step
+// Chain scorin total weight is sqrt(U256::max_value())*height - step
 // 链的得分，每条链都有一个得分，正常的节点会在得分最高的那条链上打包
-fn calculate_score(parent_step: U256,                                                                                                                                                                    : U256, current_empty_steps: U256) -> U256 {
+// Chain scoring: total weight is sqrt(U256::max_value())*height - step
+fn calculate_score(parent_step: U256, current_step: U256, current_empty_steps: U256) -> U256 {
 	U256::from(U128::max_value()) + parent_step - current_step + current_empty_steps
 }
 
