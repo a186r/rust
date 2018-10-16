@@ -109,27 +109,39 @@
 
 // 变量绑定
 // 在模式匹配的过程内部，我们可以用@来绑定一个变量名，这在复杂的模式匹配中再方便不过。
-fn main() {
-    // let x = 2u32;
-    // match x {
-    //     e @ 1...5 | e @ 10...15 => println!("get:{}", e),
-    //     _ => (),
-    // }
-    // 如上，e绑定了x的值
+// fn main() {
+//     // let x = 2u32;
+//     // match x {
+//     //     e @ 1...5 | e @ 10...15 => println!("get:{}", e),
+//     //     _ => (),
+//     // }
+//     // 如上，e绑定了x的值
 
-    // 变量绑定是个及其有用的语法，下面是官方doc里的例子
-    #[derive(Debug)]
-    struct Person {
-        name: Option<String>,
-    }
+//     // 变量绑定是个及其有用的语法，下面是官方doc里的例子
+//     #[derive(Debug)]
+//     struct Person {
+//         name: Option<String>,
+//     }
 
-    let name = "Steve".to_string();
-    let x: Option<Person> = Some(Person { name: Some(name) });
-    match x {
-        Some(Person {
-            name: ref a @ Some(_),
-            ..
-        }) => println!("{:?}", a),
-        _ => {}
-    }
-}
+//     let name = "Steve".to_string();
+//     let x: Option<Person> = Some(Person { name: Some(name) });
+//     match x {
+//         Some(Person {
+//             name: ref a @ Some(_),
+//             ..
+//         }) => println!("{:?}", a),
+//         _ => {}
+//     }
+// }
+
+// 后置条件
+// 一个后置的if表达式可以被放在match的模式之后，被称为match guards。
+// fn main() {
+//     let x = 3;
+//     let y = false;
+
+//     match x {
+//         4 | 5 if y => println!("yes"),
+//         _ => println!("no"),
+//     }
+// }
