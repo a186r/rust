@@ -140,3 +140,5 @@
 //     let y = 8u8;
 //     do_something(&y);
 // }
+
+// trait对象的实现
